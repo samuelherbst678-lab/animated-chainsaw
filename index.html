@@ -502,18 +502,17 @@ $("#loadFileBtn").addEventListener("click", async ()=>{
 setDefaults();
 </script>
 
-<!-- ===== ARD-Prognose OVERLAY – NUR SÄULEN (Klick fährt Säule hoch, Prozent ÜBER dem Balken) ===== -->
+<!-- ===== ARD-Prognose OVERLAY – NUR SÄULEN (Klick fährt Säule hoch, Prozent wandert MIT) ===== -->
 <script>
 (function(){
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
-  const GREY = "#b7bdc7";
   const commaDe = x => Number(x||0).toFixed(1).replace(".", ",");
   const norm = n => (n||"").toString().trim().toLowerCase().replace(/\s+/g,"");
   const isOther = name => { const n=norm(name); return n==="andere" || n==="sonstige"; };
 
-  // Overlay Grundbau (einmal)
   let ov = null;
+
   function buildOverlay(){
     if (ov) return ov;
     ov = document.createElement("div");
@@ -524,7 +523,7 @@ setDefaults();
         <div class="ard-head">
           <div>
             <div class="ard-title">Prognose – ARD-Stil (inoffiziell)</div>
-            <div class="ard-sub">Basis: deine aktuellen Eingaben – Säulen mit Hochfahr-Animation</div>
+            <div class="ard-sub">Basis: deine aktuellen Eingaben – Säulen per Klick</div>
           </div>
           <button class="ard-btn ard-close">Schließen</button>
         </div>
@@ -549,14 +548,12 @@ setDefaults();
     ov.querySelectorAll(".ard-close").forEach(b=> b.addEventListener("click", ()=> ov.style.display="none"));
     ov.addEventListener("click", e=>{ if(e.target===ov){ ov.style.display="none"; }});
 
-    // Buttons
     $("#btnAll").addEventListener("click", animateAllBars);
     $("#btnReset").addEventListener("click", resetBars);
 
     return ov;
   }
 
-  // Daten aus Haupt-App
   function getPercentSorted(){
     if (typeof readInputs !== "function") return [];
     const inp = readInputs();
@@ -565,7 +562,7 @@ setDefaults();
       .sort((a,b)=>(b.pct||0)-(a.pct||0));
   }
 
-  // === Prognose-Balken animiert (Prozent ÜBER dem Balken) ===
+  // Render: Texte starten UNSICHTBAR knapp über der Basis; werden erst beim Klick eingeblendet und bewegt
   function renderForecastBars(data){
     const svg = $("#forecastChart");
     const w = 800, h = 400, margin = 48;
@@ -576,7 +573,7 @@ setDefaults();
     svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     svg.innerHTML = "";
 
-    // Grund-Achse (optional dezent)
+    // Bodenlinie
     const axis = document.createElementNS("http://www.w3.org/2000/svg","line");
     axis.setAttribute("x1", margin);
     axis.setAttribute("x2", w - margin);
@@ -591,29 +588,33 @@ setDefaults();
       const targetHeight = (p.pct/maxPct)*(h - margin*2);
       const yBase = h - margin;
 
-      // Gruppe für Interaktionen
+      // Gruppe
       const g = document.createElementNS("http://www.w3.org/2000/svg","g");
+      g.style.cursor = "pointer";
       svg.appendChild(g);
 
-      // Balken (startet bei 0)
+      // Balken (Start = 0)
       const rect = document.createElementNS("http://www.w3.org/2000/svg","rect");
       rect.setAttribute("x", x);
       rect.setAttribute("width", barW);
       rect.setAttribute("y", yBase);
       rect.setAttribute("height", 0);
       rect.setAttribute("fill", p.color);
+      rect.dataset.target = targetHeight.toString();
+      rect.dataset.animating = "0";
       g.appendChild(rect);
 
-      // Prozent-Text ÜBER dem finalen Balken
+      // Prozent-Text (Start unsichtbar knapp über Basis)
       const txt = document.createElementNS("http://www.w3.org/2000/svg","text");
       txt.setAttribute("x", x + barW/2);
-      txt.setAttribute("y", yBase - targetHeight - 10);  // 10px Abstand über dem Balken
+      txt.setAttribute("y", yBase - 10);
       txt.setAttribute("fill", "#ffffff");
       txt.setAttribute("text-anchor", "middle");
       txt.setAttribute("font-size", "16");
       txt.setAttribute("font-weight", "700");
+      txt.setAttribute("opacity", "0");
       txt.textContent = `${p.pct.toFixed(1).replace(".", ",")}%`;
-      svg.appendChild(txt);
+      g.appendChild(txt);
 
       // Label unten
       const lbl = document.createElementNS("http://www.w3.org/2000/svg","text");
@@ -625,58 +626,61 @@ setDefaults();
       lbl.textContent = p.name;
       svg.appendChild(lbl);
 
-      // Klick → animiere nur diesen Balken
+      // Klick → nur dieser Balken
       g.addEventListener("click", ()=>{
-        animateBar(rect, yBase, targetHeight, 750);
+        if (rect.dataset.animating === "1") return;
+        animateBar(rect, txt, yBase, targetHeight, 750);
       });
     });
   }
 
-  function animateBar(rect, yBase, targetHeight, dur=700){
+  // Animation mit Text, der MITWANDERT und einblendet
+  function animateBar(rect, txt, yBase, targetHeight, dur=700){
+    rect.dataset.animating = "1";
     const startT = performance.now();
+    // kurze, weiche Einblendung des Textes
+    txt.setAttribute("opacity","1");
+
     (function anim(t){
       const k = Math.min(1, (t - startT)/dur);
       const eased = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k+2, 3)/2;
       const curH = targetHeight * eased;
+
       rect.setAttribute("y", yBase - curH);
       rect.setAttribute("height", curH);
+      txt.setAttribute("y", (yBase - curH - 10).toString());
+
       if (k < 1) requestAnimationFrame(anim);
+      else rect.dataset.animating = "0";
     })(performance.now());
   }
 
+  // Sequentiell alle abspielen (ohne Neu-Rendern)
   function animateAllBars(){
     const svg = $("#forecastChart");
-    const rects = Array.from(svg.querySelectorAll("rect"));
-    const yBase = parseFloat(svg.getAttribute("viewBox").split(" ")[3]) - 48; // h - margin
-    rects.forEach((r, idx) => {
-      const target = parseFloat(r.nextTarget || r.getAttribute("data-target") || (yBase - parseFloat(r.getAttribute("y"))));
-      // Rechne aus dem Text oberhalb den Zielwert neu (robust):
-      const topText = svg.querySelectorAll("text")[idx*2+0]; // jeder Balken hat 2 Texte, der erste ist Prozent
-      const pctStr = (topText?.textContent || "0").replace("%","").replace(",",".");
-      const maxH = (parseFloat(svg.getAttribute("viewBox").split(" ")[3]) - 96); // h - 2*margin
-      const targetH = Math.max(0, Math.min(maxH, (parseFloat(pctStr)/Math.max(...Array.from(svg.querySelectorAll("text"))
-                                .values()) ) )); // Fallback – wir animieren einfach alle Balken
-    });
-    // Einfacher: re-render und dann sequentiell anklicken simulieren:
-    const data = getPercentSorted();
-    renderForecastBars(data);
-    let i=0;
-    const bars = Array.from(svg.querySelectorAll("g"));
+    const groups = Array.from(svg.querySelectorAll("g"));
+    let i = 0;
     const tick = () => {
-      if (i>=bars.length) return;
-      bars[i].dispatchEvent(new Event("click"));
+      if (i >= groups.length) return;
+      groups[i].dispatchEvent(new Event("click"));
       i++;
-      setTimeout(tick, 600);
+      setTimeout(tick, 650);
     };
     tick();
   }
 
   function resetBars(){
     const svg = $("#forecastChart");
+    const h = parseFloat(svg.getAttribute("viewBox").split(" ")[3]) || 400;
+    const yBase = h - 48;
     svg.querySelectorAll("rect").forEach(r=>{
-      const yBase = 400 - 48; // h - margin
       r.setAttribute("y", yBase);
       r.setAttribute("height", 0);
+      r.dataset.animating = "0";
+    });
+    svg.querySelectorAll("g text:first-of-type").forEach(txt=>{
+      txt.setAttribute("y", yBase - 10);
+      txt.setAttribute("opacity", "0");
     });
   }
 
@@ -685,7 +689,7 @@ setDefaults();
     buildOverlay();
     ov.style.display = "flex";
     const data = getPercentSorted();
-    renderForecastBars(data);
+    renderForecastBars(data);   // kein Auto-Start!
   });
 })();
 </script>
